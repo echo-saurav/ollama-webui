@@ -45,6 +45,7 @@
 					: '';
 			system = settings.system ?? null;
 			temperature = settings.temperature ?? null;
+
 		}
 
 		db = await openDB('Chats', 1, {
@@ -218,7 +219,14 @@
 	//////////////////////////
 	// Ollama functions
 	//////////////////////////
-
+	// function uint8ArrayToString(uint8Array) {
+	// 	const string = String.fromCharCode.apply(null, uint8Array);
+	// 	return string;
+	// }
+	function uint8ArrayToString(uint8Array) {
+		const decoder = new TextDecoder('utf-8');
+		return decoder.decode(uint8Array);
+	}
 	const getModelTags = async () => {
 		const res = await fetch(`${API_BASE_URL}/tags`, {
 			method: 'GET',
@@ -238,6 +246,7 @@
 
 		console.log(res);
 		models = res.models ?? [];
+		models.push({name:"mymodel"})
 	};
 
 	const submitPrompt = async (user_prompt) => {
@@ -247,7 +256,85 @@
 			toast.error('Model not selected');
 		} else if (messages.length != 0 && messages.at(-1).done != true) {
 			console.log('wait');
-		} else {
+		}else if(selectedModel === "mymodel"){
+
+			messages = [
+				...messages,
+				{
+					role: 'user',
+					is_user:true,
+					content: user_prompt
+				}
+			];
+				
+			let responseMessage = {
+				role: 'assistant',
+				is_user:false,
+				content: ''
+			};
+			messages = [...messages, responseMessage];
+			prompt = '';
+			
+			console.log("messages",messages.slice(0,-2))
+
+			await fetch(`${API_BASE_URL}/api/gen_stream`,{
+				method:"POST",
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					"qus":user_prompt,
+					"history":messages.slice(0,-2),
+					"system": system,
+					"temp": temperature
+				})
+				}).then(async response => {
+					const reader = response.body.getReader();
+
+					async function read() {
+						return reader.read().then( async ({ done, value }) => {
+							if (done) {
+								// add title right after text
+								if (messages.length == 2) {
+									await generateTitle(user_prompt);
+								}
+								console.log('Stream finished');
+								responseMessage.done = true;
+								responseMessage.context = "none ";
+								messages = messages;
+								hljs.highlightAll();
+
+								return;
+							}
+							responseMessage.content += uint8ArrayToString(value);
+							messages = messages;			
+
+							return read(); // Continue reading the stream
+						});
+					}
+					return read()
+				}).catch(error => {
+					console.error('Error:', error);
+					responseMessage.done = true;
+					responseMessage.context = "none ";
+					hljs.highlightAll();
+				});
+
+
+				await db.put('chats', {
+					id: chatId,
+					title: title,
+					model: selectedModel,
+					system: system,
+					options: {
+						temperature: temperature
+					},
+					timestamp: Date.now(),
+					messages: messages
+				});
+				chats = await db.getAllFromIndex('chats', 'timestamp');
+
+		}else {
 			if (messages.length == 0) {
 				await db.put('chats', {
 					id: chatId,
@@ -366,6 +453,86 @@
 	const regenerateResponse = async () => {
 		console.log('regenerateResponse');
 
+		if(selectedModel === "mymodel"){
+			if (messages.length != 0 && messages.at(-1).done == true) {
+
+				messages.splice(messages.length - 1, 1);
+				messages = messages;
+
+				let user_prompt = messages.at(-2);
+				let responseMessage = {
+					role: 'assistant',
+					is_user:false,
+					content: ''
+				};
+
+				messages = [...messages, responseMessage];
+				prompt = '';
+				
+				console.log("messages",messages.slice(0,-2))
+	
+				await fetch(`${API_BASE_URL}/api/gen_stream`,{
+					method:"POST",
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+							"qus":user_prompt,
+							"history":messages.slice(0,-2),
+							"system": system,
+							"temp": temperature
+						})
+					}).then(async response => {
+						const reader = response.body.getReader();
+	
+						async function read() {
+							return reader.read().then( async ({ done, value }) => {
+								if (done) {
+									// add title right after text
+									if (messages.length == 2) {
+										await generateTitle(user_prompt);
+									}
+									console.log('Stream finished');
+									responseMessage.done = true;
+									responseMessage.context = "none ";
+									messages = messages;
+									hljs.highlightAll();
+	
+									return;
+								}
+								responseMessage.content += uint8ArrayToString(value);
+								messages = messages;			
+	
+								return read(); // Continue reading the stream
+							});
+						}
+						return read()
+					}).catch(error => {
+						console.error('Error:', error);
+						responseMessage.done = true;
+						responseMessage.context = "none ";
+						hljs.highlightAll();
+					});
+	
+	
+					await db.put('chats', {
+						id: chatId,
+						title: title,
+						model: selectedModel,
+						system: system,
+						options: {
+							temperature: temperature
+						},
+						timestamp: Date.now(),
+						messages: messages
+					});
+					chats = await db.getAllFromIndex('chats', 'timestamp');
+					
+					return
+			}
+
+		}
+
 		if (messages.length != 0 && messages.at(-1).done == true) {
 			messages.splice(messages.length - 1, 1);
 			messages = messages;
@@ -458,7 +625,80 @@
 	};
 
 	const generateTitle = async (user_prompt) => {
-		console.log('generateTitle');
+		if(selectedModel==="mymodel"){
+			let example = [
+				{"is_user":true,"content":"How to make pasta?"},
+				{"is_user":false,"content":"A delicious pasta making recipe"},
+				{"is_user":true,"content":"Hi"},
+				{"is_user":false,"content":"Hello!"},
+				{"is_user":true,"content":"does living alone help grow ? as a person?"},
+				{"is_user":false,"content":"Living alone for growth"},
+				{"is_user":true,"content":"i want to make a 2d graph with point like data , but i want to use a light weight npm package"},
+				{"is_user":false,"content":"Graph with Chart.js"},
+				{"is_user":true,"content":"is there any way to que list in flask api"},
+				{"is_user":false,"content":"Flask API queues"},
+				{"is_user":true,"content":"give me some flirting line that i can say to my facebook friend"},
+				{"is_user":false,"content":"Flirting line request"},
+				{"is_user":true,"content":"i trying to be fit by walking everyday, i am not fat , but just feels lazy, how much steps should i take"},
+				{"is_user":false,"content":"Walking for fitness"},
+			]
+
+			await fetch(`${API_BASE_URL}/api/gen_stream`,{
+				method:"POST",
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					"qus":`Generate a creative short title based on this question ,'${user_prompt}'`,
+					"history":example
+				})
+				}).then(async response => {
+					const reader = response.body.getReader();
+
+					async function read() {
+						return reader.read().then( async ({ done, value }) => {
+							if (done) {
+								console.log("title",title)
+								return;
+							}
+							title += uint8ArrayToString(value);
+							return read(); // Continue reading the stream
+						});
+					}
+					return read()
+				}).catch(error => {
+					console.error('Error:', error);
+					title="Unknown title"
+				});
+			
+			return
+		}
+
+		// if(selectedModel == "mymodel"){
+		// 	const my_res  = await fetch('http://192.168.0.120:5555/api/gen',{
+		// 	   method:"POST",
+		// 	   headers: {
+		// 		   'Content-Type': 'application/json'
+		// 	   },
+		// 	   body: JSON.stringify({
+		// 		   "qus":`Generate a brief 3-5 word title for this question, excluding the term 'title.' . use strictly not more then one line. Then, please reply with only the title: ${user_prompt}`,
+		// 		   "history":[	]
+		// 	   })
+		// 	   }).then(async (res)=>{
+		// 		   if (!res.ok) throw await res.json();
+		// 		   return res.json();
+		// 	   }).catch((error) => {
+		// 		   console.log(error);
+		// 		   return null;
+		// 	   });
+   
+		//    if (my_res) {
+		// 	   console.log(my_res);
+		// 	   title = my_res.choices[0]['text'];
+		//    }
+		//    return
+		// }
+
 
 		const res = await fetch(`${API_BASE_URL}/generate`, {
 			method: 'POST',
